@@ -108,7 +108,9 @@ type session struct {
 	handshakeChan     chan error
 	handshakeComplete bool
 
-	receivedFirstPacket  bool // since packet numbers start at 0, we can't use largestRcvdPacketNumber != 0 for this
+	receivedFirstPacket              bool // since packet numbers start at 0, we can't use largestRcvdPacketNumber != 0 for this
+	receivedFirstForwardSecurePacket bool
+
 	lastRcvdPacketNumber protocol.PacketNumber
 	// Used to calculate the next packet number from the truncated wire
 	// representation, and sent back in public reset packets
@@ -398,7 +400,6 @@ runLoop:
 			if !ok { // the aeadChanged chan was closed. This means that the handshake is completed.
 				s.handshakeComplete = true
 				handshakeEvent = nil // prevent this case from ever being selected again
-				s.sentPacketHandler.SetHandshakeComplete()
 				if !s.version.UsesTLS() && s.perspective == protocol.PerspectiveClient {
 					// In gQUIC, there's no equivalent to the Finished message in TLS
 					// The server knows that the handshake is complete when it receives the first forward-secure packet sent by the client.
@@ -536,6 +537,10 @@ func (s *session) handlePacketImpl(p *receivedPacket) error {
 	// if the decryption failed, this might be a packet sent by an attacker
 	if err != nil {
 		return err
+	}
+	if !s.receivedFirstForwardSecurePacket && packet.encryptionLevel == protocol.EncryptionForwardSecure {
+		s.sentPacketHandler.SetHandshakeComplete()
+		s.receivedFirstForwardSecurePacket = true
 	}
 
 	s.lastRcvdPacketNumber = hdr.PacketNumber
